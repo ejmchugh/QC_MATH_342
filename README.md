@@ -2,6 +2,6 @@
 
 ## Lecture Notes
 
-[Lecture 1](https://github.com/ejmchugh/QC_MATH_342/blob/lecture_notes/lecture_notes/lec01mchugh.pdf)
+[Lecture 1](https://github.com/ejmchugh/QC_MATH_342/blob/main/lecture_notes/lec01mchugh.pdf)
 
-[Lecture 2](https://github.com/ejmchugh/QC_MATH_342/blob/lecture_notes/lecture_notes/lec02mchugh.pdf)
+[Lecture 2](https://github.com/ejmchugh/QC_MATH_342/blob/main/lecture_notes/lec02mchugh.pdf)
