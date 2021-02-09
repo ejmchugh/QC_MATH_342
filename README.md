@@ -2,11 +2,14 @@
 
 ## Lecture Notes
 
-[Lecture 1](https://github.com/ejmchugh/QC_MATH_342/blob/main/lectures/lec01mchugh.pdf)
+[Lecture 1](https://github.com/ejmchugh/QC_MATH_342/blob/main/lectures/lec01mchugh.pdf)\
+Monday, Feb 1
 
-[Lecture 2](https://github.com/ejmchugh/QC_MATH_342/blob/main/lectures/lec02mchugh.pdf)
+[Lecture 2](https://github.com/ejmchugh/QC_MATH_342/blob/main/lectures/lec02mchugh.pdf)\
+Wednesday, Feb 3
 
-[Lecture 3](https://github.com/ejmchugh/QC_MATH_342/blob/main/lectures/lec03mchugh.pdf)
+[Lecture 3](https://github.com/ejmchugh/QC_MATH_342/blob/main/lectures/lec03mchugh.pdf)\
+Monday, Feb 8
 
 <!-- [Lecture 4](https://github.com/ejmchugh/QC_MATH_342/blob/main/lectures/lec04mchugh.pdf) -->
 
