@@ -35,4 +35,7 @@ Monday, Feb 8
 
 <!-- [Lecture 15](https://github.com/ejmchugh/QC_MATH_342/blob/main/lectures/lec15mchugh.pdf) -->
 
+## Labs
+
 ## Other Stuff
+
