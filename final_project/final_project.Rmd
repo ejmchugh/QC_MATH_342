@@ -1,0 +1,568 @@
+---
+title: "Final Project"
+author: "Elizabeth McHugh"
+date: "5/22/2021"
+output:
+  pdf_document:
+    toc: yes
+    fig_caption: yes
+    keep_tex: yes
+  word_document:
+    toc: yes
+---
+
+```{r}
+
+if (!require("pacman")){install.packages("pacman")}
+pacman::p_load(knitr, randomForest, dplyr, tidyverse, ggplot2, missForest, stats, readr, magrittr, data.table, lubridate, stringr)
+
+```
+
+##Import and Clean Data Set (2.1)##
+
+*Import the data set from drive.*
+
+```{r}
+
+library(readr)
+housing_data_2016_2017 <- read_csv("C:\\Users\\twiz0\\Downloads\\housing_data_2016_2017.csv")
+#View(housing_data_2016_2017)
+
+```
+
+#Split Data#
+
+Split Test and Training Sets. Retain 20% of data for testing.
+
+```{r}
+
+set.seed(479)
+
+#Split 20% Test/ 80% Train
+K = 5   
+
+test_indices = sample(1 : nrow(housing_data_2016_2017), round(nrow(housing_data_2016_2017) / K))
+train_indices = setdiff(1 : nrow(housing_data_2016_2017), test_indices)
+
+housing_data_test = housing_data_2016_2017[test_indices, ]
+housing_data_train = housing_data_2016_2017[train_indices, ]
+
+#View(housing_data_train)
+#View(housing_data_test)
+
+#summary(housing_data_train)
+#summary(housing_data_test)
+
+#Count observations with missing target variable.
+sum(is.na(housing_data_2016_2017$sale_price))
+```
+
+#Initial (Pre-Imputation) Data Clean-up (2.2)#
+
+Data Clean-Up on Training Set
+
+```{r}
+
+#Remove obviously unnecessary columns, reorder with objective variable (sale price) at head, remove observations with missing sale price. 
+housing_data_train = housing_data_train %>%
+  select(-(1:28), -url) %>%
+    select(sale_price, everything()) %>%
+      filter(!is.na(sale_price)) %>%
+        select(-listing_price_to_nearest_1000)
+
+#Unformat all prices
+housing_data_train = housing_data_train %>%
+  mutate(sale_price = parse_number(sale_price)) %>%
+  mutate(common_charges = parse_number(common_charges)) %>%
+  mutate(maintenance_cost = parse_number(maintenance_cost)) %>%
+  mutate(parking_charges = parse_number(parking_charges)) %>%
+  mutate(total_taxes = parse_number(total_taxes))
+
+#Add feature for total bathrooms (whole plus half). 
+housing_data_train = housing_data_train %>%
+  mutate(num_half_bathrooms = replace(num_half_bathrooms, is.na(num_half_bathrooms), 0)) %>%
+  mutate(num_bathrooms = num_full_bathrooms + 0.5 * num_half_bathrooms) 
+
+#Separate dates sold as year, date, month, weekdays, and days of month.
+housing_data_train = housing_data_train %>%
+  mutate(date_of_sale = as_date(mdy(date_of_sale))) %>%
+  mutate(month_of_year = month(date_of_sale)) %>%
+  mutate(day_of_week = wday(date_of_sale)) %>%
+  mutate(day_of_month = as.numeric(day(date_of_sale))) %>%
+  mutate(year = year(date_of_sale)) %>%
+    mutate(date_of_sale = as.numeric(date_of_sale))
+
+#Extract zip codes from addresses.
+housing_data_train = housing_data_train %>%
+  mutate(zip_numeric = as.numeric(str_sub(full_address_or_zip_code, -5,-1))) %>%
+  mutate(zip_factor = as.factor(zip_numeric))
+
+#Create dummy variables for non-factor variables with potentially significant missing data.
+housing_data_train = housing_data_train %>%
+  mutate(common_charges_missing = as.factor(is.na(common_charges))) %>%
+    mutate(common_charges = ifelse(is.na(common_charges), 0, common_charges)) %>%
+  mutate(approx_year_built_missing = as.factor(is.na(approx_year_built))) %>%
+  mutate(maintenance_cost_missing = as.factor(is.na(maintenance_cost))) %>%
+    mutate(maintenance_cost = ifelse(is.na(maintenance_cost), 0, maintenance_cost)) %>%
+  mutate(num_floors_in_building_missing = as.factor(is.na(num_floors_in_building))) %>%
+  mutate(parking_charges_missing = as.factor(is.na(parking_charges))) %>%
+    mutate(parking_charges = ifelse(is.na(parking_charges), 0, parking_charges)) %>%
+  mutate(pct_tax_deductibl_missing = as.factor(is.na(pct_tax_deductibl))) %>%
+  mutate(sq_footage_missing = as.factor(is.na(sq_footage))) %>%
+  mutate(total_taxes_missing = as.factor(is.na(total_taxes)))
+
+#Coerce yes/no to factors.
+housing_data_train = housing_data_train %>%
+  mutate(cats_allowed = factor(cats_allowed)) %>%
+  mutate(dogs_allowed = factor(dogs_allowed))
+
+#Garage exists to factor.
+housing_data_train = housing_data_train %>%
+  mutate(garage_exists = as.factor(!is.na(garage_exists))) 
+
+#Factorize character variables and set NA to "unknown" factor.
+housing_data_train = housing_data_train %>%
+  mutate(dining_room_type = replace_na(dining_room_type, "unknown")) %>%
+  mutate(dining_room_type = factor(dining_room_type)) %>%
+  mutate(coop_condo = factor(coop_condo, ordered = FALSE)) %>%
+  mutate(fuel_type = ifelse(fuel_type %in% c("other", "Other"), "other", fuel_type)) %>%
+  mutate(fuel_type = ifelse(is.na(fuel_type), "unknown", fuel_type)) %>%
+  mutate(fuel_type = factor(fuel_type)) %>%
+  mutate(kitchen_type = ifelse(kitchen_type %in% c("eat in", "Eat In", "Eat in"), "eat in", kitchen_type)) %>%
+  mutate(kitchen_type = replace_na(kitchen_type, "unknown")) %>%
+  mutate(kitchen_type = ifelse(kitchen_type == "Combo", "combo", kitchen_type)) %>% 
+  mutate(kitchen_type = as.factor(kitchen_type))
+
+#Take care of factors with only a few observations.
+housing_data_train = housing_data_train %>%
+  mutate(dining_room_type = recode(dining_room_type, "dining area" = "other")) %>%
+  mutate(kitchen_type = recode(kitchen_type, "1955" = "unknown"))
+
+#Fill in singular missing values in train data (found zip manually in raw data)
+housing_data_train$zip_numeric[2] = 11354
+housing_data_train$zip_factor[2] = "11354"
+
+#Remove full address, model type, and date of sale
+housing_data_train = housing_data_train %>%
+  mutate(total_additional_charges = common_charges + maintenance_cost + parking_charges) %>%
+  select(-full_address_or_zip_code, -model_type, -common_charges, -parking_charges, -maintenance_cost)
+  
+View(summary(housing_data_train))
+#sapply(housing_data_train, class)
+```
+
+Data Clean-Up on Test Set
+
+```{r}
+
+#Remove obviously unnecessary columns, reorder with objective variable (sale price) at head, remove observations with missing sale price. 
+housing_data_test = housing_data_test %>%
+  select(-(1:28), -url) %>%
+    select(sale_price, everything()) %>%
+      filter(!is.na(sale_price)) %>%
+        select(-listing_price_to_nearest_1000)
+
+#Unformat all prices
+housing_data_test = housing_data_test %>%
+  mutate(sale_price = parse_number(sale_price)) %>%
+  mutate(common_charges = parse_number(common_charges)) %>%
+  mutate(maintenance_cost = parse_number(maintenance_cost)) %>%
+  mutate(parking_charges = parse_number(parking_charges)) %>%
+  mutate(total_taxes = parse_number(total_taxes))
+
+#Add feature for total bathrooms (whole plus half). 
+housing_data_test = housing_data_test %>%
+  mutate(num_half_bathrooms = replace(num_half_bathrooms, is.na(num_half_bathrooms), 0)) %>%
+  mutate(num_bathrooms = num_full_bathrooms + 0.5 * num_half_bathrooms) 
+
+#Separate dates sold as year, date, month, weekdays, and days of month.
+housing_data_test = housing_data_test %>%
+  mutate(date_of_sale = as_date(mdy(date_of_sale))) %>%
+  mutate(month_of_year = month(date_of_sale)) %>%
+  mutate(day_of_week = wday(date_of_sale)) %>%
+  mutate(day_of_month = as.numeric(day(date_of_sale))) %>%
+  mutate(year = year(date_of_sale)) %>%
+    mutate(date_of_sale = as.numeric(date_of_sale))
+
+#Extract zip codes from addresses.
+housing_data_test = housing_data_test %>%
+  mutate(zip_numeric = as.numeric(str_sub(full_address_or_zip_code, -5,-1))) %>%
+  mutate(zip_factor = as.factor(zip_numeric))
+
+#Create dummy variables for non-factor variables with potentially significant missing data.
+housing_data_test = housing_data_test %>%
+  mutate(common_charges_missing = as.factor(is.na(common_charges))) %>%
+    mutate(common_charges = ifelse(is.na(common_charges), 0, common_charges)) %>%
+  mutate(approx_year_built_missing = as.factor(is.na(approx_year_built))) %>%
+  mutate(maintenance_cost_missing = as.factor(is.na(maintenance_cost))) %>%
+    mutate(maintenance_cost = ifelse(is.na(maintenance_cost), 0, maintenance_cost)) %>%
+  mutate(num_floors_in_building_missing = as.factor(is.na(num_floors_in_building))) %>%
+  mutate(parking_charges_missing = as.factor(is.na(parking_charges))) %>%
+    mutate(parking_charges = ifelse(is.na(parking_charges), 0, parking_charges)) %>%
+  mutate(pct_tax_deductibl_missing = as.factor(is.na(pct_tax_deductibl))) %>%
+  mutate(sq_footage_missing = as.factor(is.na(sq_footage))) %>%
+  mutate(total_taxes_missing = as.factor(is.na(total_taxes)))
+
+#Coerce yes/no to factors.
+housing_data_test = housing_data_test %>%
+  mutate(cats_allowed = factor(cats_allowed)) %>%
+  mutate(dogs_allowed = factor(dogs_allowed))
+
+#Garage exists to factor.
+housing_data_test = housing_data_test %>%
+  mutate(garage_exists = as.factor(!is.na(garage_exists))) 
+
+#Factorize character variables and set NA to "unknown" factor.
+housing_data_test = housing_data_test %>%
+  mutate(dining_room_type = replace_na(dining_room_type, "unknown")) %>%
+  mutate(dining_room_type = factor(dining_room_type)) %>%
+  mutate(coop_condo = factor(coop_condo, ordered = FALSE)) %>%
+  mutate(fuel_type = ifelse(fuel_type %in% c("other", "Other"), "other", fuel_type)) %>%
+  mutate(fuel_type = ifelse(is.na(fuel_type), "unknown", fuel_type)) %>%
+  mutate(fuel_type = factor(fuel_type)) %>%
+  mutate(kitchen_type = ifelse(kitchen_type %in% c("eat in", "Eat In", "Eat in"), "eat in", kitchen_type)) %>%
+  mutate(kitchen_type = replace_na(kitchen_type, "unknown")) %>%
+  mutate(kitchen_type = ifelse(kitchen_type == "Combo", "combo", kitchen_type)) %>% 
+  mutate(kitchen_type = as.factor(kitchen_type))
+
+#Take care of factors with only a few observations.
+housing_data_test = housing_data_test %>%
+  mutate(dining_room_type = recode(dining_room_type, "dining area" = "other")) %>%
+  mutate(kitchen_type = recode(kitchen_type, "1955" = "unknown"))
+
+#Fill in singular missing values easily available manually 
+housing_data_test = housing_data_test %>%
+  mutate(dining_room_type = recode(dining_room_type, "dining area" = "other"))
+
+#Remove full address, model type, and date of sale
+housing_data_test = housing_data_test %>%
+  mutate(total_additional_charges = common_charges + maintenance_cost + parking_charges) %>%
+  select(-full_address_or_zip_code, -model_type, -common_charges, -parking_charges, -maintenance_cost)
+
+summary(housing_data_test)
+#sapply(housing_data_test, class)
+```
+
+##Missingness in Features (2.3)
+
+Impute using missForest.
+
+```{r}
+
+#Impute missing values in training data
+housing_data_train_imp = missForest(data.frame(housing_data_train))$ximp
+
+#Impute missing values in test data.
+housing_data_test_imp = cbind("sale_price" = NA, housing_data_test[2:ncol(housing_data_test)])
+housing_data_test_train_imp = rbind(housing_data_test_imp, housing_data_train_imp)
+housing_data_test_train_imp = missForest(data.frame(housing_data_test_train_imp))$ximp
+
+housing_data_test_imp = housing_data_test_train_imp[1:nrow(housing_data_test_imp), ]
+
+```
+
+Playing with visualizations to consider feature transformations.
+
+```{r}
+
+#Not a linear relationship.
+ggplot(housing_data_train_imp) +
+  aes(x = log(total_additional_charges), y = sale_price) +
+  geom_smooth() +
+  geom_jitter()
+
+
+#Note how the relative lack of data in zip codes (just two zips?) below 11300 as well as the lack of density in sales price in those zip codes (this would seem to not make for good prediction) as compared to the apparent negative correlation between sale price and zip code above 11300 (which actually might serve as a decent predictor for sales price in those zip codes). 
+
+
+ggplot(housing_data_train_imp) +
+  aes(x = zip_factor, y = sale_price) +
+  geom_smooth() +
+  geom_jitter()
+
+ggplot(housing_data_train_imp) +
+  aes(x = zip_numeric, y = sale_price) +
+  geom_smooth() +
+  geom_jitter()
+
+#Visualize effect of interactions between #bedrooms and #bathrooms on sale price
+ggplot(housing_data_train_imp) +
+  aes(x = (num_bedrooms / num_bathrooms)^2, y = sale_price) +
+  geom_smooth() + 
+  geom_jitter()
+
+ggplot(housing_data_train_imp) +
+  aes(x = (num_bedrooms / num_bathrooms)^2, y = sale_price) +
+  geom_smooth() + 
+  geom_jitter()
+
+```
+
+Feature Transformations
+
+Add feature transformations to be included in models.
+
+```{r}
+#Training Data Transformations
+
+housing_data_train_imp = housing_data_train_imp %>%
+  mutate(log_tot_add_charges = log(total_additional_charges)) %>%
+  mutate(log_tot_add_charges = ifelse(log_tot_add_charges == -Inf, 0, log_tot_add_charges)) %>%
+    select(-num_half_bathrooms) %>%
+    mutate(num_missing = (as.numeric(common_charges_missing) + as.numeric(approx_year_built_missing) + as.numeric(maintenance_cost_missing) + as.numeric(num_floors_in_building_missing) + as.numeric(parking_charges_missing) + as.numeric(pct_tax_deductibl_missing) + as.numeric(sq_footage_missing) + as.numeric(total_taxes_missing))) %>%
+      select(-common_charges_missing, -approx_year_built_missing, -maintenance_cost_missing, -num_floors_in_building_missing, -parking_charges_missing, -pct_tax_deductibl_missing, -sq_footage_missing)
+
+housing_data_train_imp = housing_data_train_imp %>%
+  mutate(bedroom_sq_ft_ratio = num_bedrooms / sq_footage) %>%
+  mutate(bedroom_bathroom_ratio = num_bedrooms / num_bathrooms) %>%
+    select(-zip_numeric)
+
+#Test Data Transformations
+
+
+housing_data_test_imp = housing_data_test_imp %>%
+  mutate(log_tot_add_charges = log(total_additional_charges)) %>%
+  mutate(log_tot_add_charges = ifelse(log_tot_add_charges == -Inf, 0, log_tot_add_charges)) %>%
+    select(-num_half_bathrooms) %>%
+    mutate(num_missing = (as.numeric(common_charges_missing) + as.numeric(approx_year_built_missing) + as.numeric(maintenance_cost_missing) + as.numeric(num_floors_in_building_missing) + as.numeric(parking_charges_missing) + as.numeric(pct_tax_deductibl_missing) + as.numeric(sq_footage_missing) + as.numeric(total_taxes_missing))) %>%
+      select(-common_charges_missing, -approx_year_built_missing, -maintenance_cost_missing, -num_floors_in_building_missing, -parking_charges_missing, -pct_tax_deductibl_missing, -sq_footage_missing)
+
+housing_data_test_imp = housing_data_test_imp %>%
+  mutate(bedroom_sq_ft_ratio = num_bedrooms / sq_footage) %>%
+  mutate(bedroom_bathroom_ratio = num_bedrooms / num_bathrooms) %>%
+    select(-zip_numeric)
+
+
+#head(housing_data_train_imp)
+#head(housing_data_test_imp)
+
+```
+
+Split into X, y test and training sets.
+
+```{r}
+
+X_train = housing_data_train_imp[ , 2:ncol(housing_data_train_imp)]
+y_train = housing_data_train_imp[ , 1]
+
+X_test = housing_data_test_imp[ , 2:ncol(housing_data_test_imp)]
+y_test = housing_data_test[ ,1]
+
+
+pacman::p_load(gtsummary)
+tbl_summary(rbind(X_train, X_test), statistic = list(all_continuous() ~ "{mean} ({sd})",
+                     all_categorical() ~ "{n} / {N} ({p}%)")) 
+```
+
+##Regression Tree Modeling (3.1)
+
+Load YARF
+
+```{r}
+
+Sys.setenv(JAVA_HOME = '/usr/lib/jvm/jdk1.8.0_65')
+
+if (!pacman::p_isinstalled(YARF)){
+  pacman::p_install_gh("kapelner/YARF/YARFJARs", ref = "dev")
+  pacman::p_install_gh("kapelner/YARF/YARF", ref = "dev", force = TRUE)
+}
+options(java.parameters = "-Xmx4000m")
+pacman::p_load(YARF)
+
+library(YARF, YARFJARs)
+
+```
+
+Create one tree model.
+
+```{r}
+
+mod_YARF = YARF(y = y_train, X = X_train, num_trees = 1)
+
+illustrate_trees(mod_YARF, max_depth = 5, length_in_px_per_half_split = 30, font_size = 14, line_rgb_color = c(0, 200, 100), background_rgb_color = c(250, 250, 250), text_rgb_color = c(50, 0, 100), file_format = "png", title = "Housing Data YARF Model Tree", open_file = TRUE)
+
+mod_YARF
+
+```
+
+Tree Metrics? Nope.. Just a free space to check out some things.
+
+```{r}
+
+#housing_data_test
+#housing_data_train_imp
+
+```
+
+##Linear Modeling (3.2)
+
+Create OLS Model
+
+```{r}
+
+#summary(X_train)
+#str(X_train)
+
+mod_ols = lm(y_train ~ ., X_train)
+mod_ols
+
+summary(mod_ols)
+View(data.frame(coefficients(mod_ols)), "OLS Model Coefficients")
+View(mod_ols)
+```
+
+OLS In-Sample Metrics
+
+```{r}
+
+RMSE = summary(mod_ols)$sigma
+RMSE
+
+r_squared = summary(mod_ols)$r.square
+
+View(data.frame(cbind("R Squared" = r_squared, "RMSE" = RMSE)),  title = "OLS Model In-Sample Errors")
+
+```
+
+##Random Forest Modeling (3.3)
+
+Create RF Model
+
+```{r}
+
+rf_mod = randomForest(y_train ~ . , data = X_train, ntree = 6000, mtry = 25)
+
+rf_mod_YARF = YARF(X = X_train, y = y_train, num_trees = 6000, mtry = 25)
+
+```
+
+##Performance Results for Random Forest (4)
+
+RF Metrics
+
+```{r}
+
+rf_mod
+rf_mod_YARF
+
+oob_se = sd(housing_data_train$sale_price - rf_mod$predicted)
+oob_se
+
+View(data.frame(cbind("R-Squared" = max(rf_mod$rsq), "OOB_SE" = oob_se)), "Random Forest Metrics")
+
+```
+
+#Break open the test data.
+
+Out-of-sample OLS model metrics
+
+```{r}
+
+y_test = as.matrix(y_test)
+
+y_hat_oos = predict(mod_ols, X_test)
+oos_residuals = y_test - y_hat_oos
+
+R_sq_oos = 1 - sum(oos_residuals^2) / sum((y_test - mean(y_test))^2)
+RMSE_oos = sqrt(mean(oos_residuals^2))
+ooss_e = sd(y_hat_oos - y_test)
+
+RMSE_oos
+R_sq_oos
+ooss_e
+
+```
+
+Create a final OLS model and compute final in-sample statistics for
+whole data set.
+
+```{r}
+
+train = cbind(X_train, "sale_price" = y_train)
+test = cbind(X_test, y_test)
+full = rbind(train, test)
+
+head(train)
+head(test)
+
+X = full[ , 1:(ncol(full) - 1)]
+y = full[ , ncol(full)]
+  
+ols_mod_final = lm(y ~ ., X)
+summary(ols_mod_final)
+
+summary(ols_mod_final)$r.sq
+
+R_sq_final = summary(ols_mod_final)$r.sq
+RMSE_final = summary(ols_mod_final)$sigma
+
+```
+
+```{r}
+
+RMSE_Rsq_table = data.frame(cbind("RMSE" = c(RMSE, RMSE_oos, RMSE_final), "R Squared" = c(r_squared, R_sq_oos, R_sq_final)), row.names = c("In Sample", "Out-of-Sample", "Final Model In-Sample"))
+
+View(RMSE_Rsq_table)
+
+```
+
+```{r}
+#OOS randomForest
+y_test = as.matrix(y_test)
+y_hat_rf_mod = predict(rf_mod, X_test)
+oos_residuals_rf_mod = y_test - y_hat_rf_mod
+
+R_sq_rf_mod = 1 - sum(oos_residuals_rf_mod^2) / sum((y_test - mean(y_test))^2)
+RMSE_rf_mod = sqrt(mean(oos_residuals_rf_mod^2))
+ooss_e_rf_mod = sd(y_hat_rf_mod - y_test)
+
+RMSE_rf_mod
+R_sq_rf_mod
+ooss_e_rf_mod
+
+#OOS YARF
+y_test = as.matrix(y_test)
+y_hat_YARF = predict(rf_mod_YARF, X_test)
+oos_residuals_YARF = y_test - y_hat_YARF
+
+R_sq_YARF = 1 - sum(oos_residuals_YARF^2) / sum((y_test - mean(y_test))^2)
+RMSE_YARF = sqrt(mean(oos_residuals_YARF^2))
+ooss_e_YARF = sd(y_hat_YARF - y_test)
+
+RMSE_YARF
+R_sq_YARF
+ooss_e_YARF
+
+data.frame(cbind(cbind("RMSE_YARF" = RMSE_YARF, "R_sq_YARF" = R_sq_YARF, "ooss_e_YARF" = ooss_e_YARF)), cbind("RMSE_rf_mod" = RMSE_rf_mod, "R_sq_rf_mod" = R_sq_rf_mod, "ooss_e_rf_mod" = ooss_e_rf_mod))
+```
+
+```{r}
+#Final Model randomForest
+rf_final_mod = randomForest(y ~ . , data = X, ntree = 6000, mtry = 25)
+rf_final_mod
+
+```
+
+```{r}
+
+#Final Model YARF
+YARF_final_model = YARF(X = X_train, y = y_train, num_trees = 6000, mtry = 25)
+YARF_final_model
+
+```
+
+```{r}
+
+oob_se_rf_fin = sd(y - rf_final_mod$predicted)
+oob_se_rf_fin
+
+r_sq_rf_fin = max(rf_mod$rsq)
+r_sq_rf_fin
+
+oob_se_YARF_fin = sd(y - rf_final_mod$predicted)
+oob_se_YARF_fin
+
+r_sq_YARF_fin = YARF_final_model$r_squared
+r_sq_YARF_fin
+
+```
