@@ -1,0 +1,26 @@
+---
+title: "Chart Making"
+author: "Elizabeth McHugh"
+date: "5/25/2021"
+output: html_document
+---
+
+```{r}
+
+metrics_X = X
+metrics_X_test = X_test
+metrics_X_train = X_train
+
+metrics_y = y
+metrics_y_test = y_test
+metrics_y_train = y_train
+
+metrics_mod_ols = mod_ols
+metrics_mod_YARF = mod_YARF
+metrics_mod_RF = rf_mod
+metrics_mod_RF_YARF = rf_mod_YARF
+
+metrics_mod_ols_final = ols_mod_final
+
+
+```
